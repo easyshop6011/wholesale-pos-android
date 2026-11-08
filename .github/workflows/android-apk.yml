@@ -1,50 +1,50 @@
-name: Build Wholesale POS APK
+name: Build APK
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
+    defaults:
+      run:
+        # Folder that contains package.json (taken from your build log path)
+        working-directory: source/wholesale-pos
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Capacitor 7 CLI needs Node 20+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
+      # Capacitor 7 Android code needs JDK 21 (JDK 17 gives "invalid source release: 21")
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-
-      - name: Extract ZIP
-        run: unzip wholesale-pos-saas-phase3a.zip -d source
+          java-version: '21'
 
       - name: Install dependencies
-        working-directory: source/wholesale-pos
         run: npm install
 
-      - name: Setup Android project
-        working-directory: source/wholesale-pos
+      # Idempotent: creates android/ if missing, copies the printer plugin, syncs
+      - name: Prepare Android project
         run: npm run android:setup
 
       - name: Build APK
-        working-directory: source/wholesale-pos
-        run: npm run android:apk
+        run: |
+          chmod +x android/gradlew
+          npm run android:apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Wholesale-POS-APK
+          name: wholesale-pos-debug-apk
           path: source/wholesale-pos/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
           
