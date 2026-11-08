@@ -8,13 +8,44 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    defaults:
-      run:
-        # Folder that contains package.json (taken from your build log path)
-        working-directory: source/wholesale-pos
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Finds the project (the package.json named "wholesale-pos") anywhere in the repo.
+      # If the repo only holds a .zip of the project, it is unzipped into ./source first.
+      - name: Locate project
+        run: |
+          find_app() {
+            while IFS= read -r f; do
+              if grep -q '"name"[[:space:]]*:[[:space:]]*"wholesale-pos"' "$f"; then
+                dirname "$f"
+                return 0
+              fi
+            done < <(find . -name package.json -not -path '*/node_modules/*' | sort)
+            return 1
+          }
+          APP_DIR="$(find_app || true)"
+          if [ -z "$APP_DIR" ]; then
+            ZIP="$(find . -iname '*wholesale*.zip' | sort -V | tail -n 1)"
+            [ -n "$ZIP" ] || ZIP="$(find . -iname '*.zip' | sort -V | tail -n 1)"
+            if [ -z "$ZIP" ]; then
+              echo "::error::No wholesale-pos project (package.json) and no .zip found in this repo"
+              find . -not -path './.git/*' | head -50
+              exit 1
+            fi
+            echo "Unzipping $ZIP into ./source"
+            mkdir -p source
+            unzip -q -o "$ZIP" -d source
+            APP_DIR="$(find_app || true)"
+          fi
+          if [ -z "$APP_DIR" ]; then
+            echo "::error::package.json of wholesale-pos not found"
+            find . -not -path './.git/*' | head -50
+            exit 1
+          fi
+          echo "Project folder: $APP_DIR"
+          echo "APP_DIR=$GITHUB_WORKSPACE/${APP_DIR#./}" >> "$GITHUB_ENV"
 
       # Capacitor 7 CLI needs Node 20+
       - name: Setup Node
@@ -30,21 +61,27 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          cd "$APP_DIR"
+          npm install
 
       # Idempotent: creates android/ if missing, copies the printer plugin, syncs
       - name: Prepare Android project
-        run: npm run android:setup
+        run: |
+          cd "$APP_DIR"
+          npm run android:setup
 
       - name: Build APK
         run: |
+          cd "$APP_DIR"
           chmod +x android/gradlew
           npm run android:apk
+          mkdir -p "$GITHUB_WORKSPACE/apk-out"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/apk-out/"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: wholesale-pos-debug-apk
-          path: source/wholesale-pos/android/app/build/outputs/apk/debug/app-debug.apk
+          path: apk-out/app-debug.apk
           if-no-files-found: error
-          
